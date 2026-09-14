@@ -25,8 +25,9 @@ console.log(`[Mail] provider=smtp; host=${mailHost}; port=${process.env.MAIL_POR
 function createMailTransport(port) {
   return nodemailer.createTransport({
     host: mailHost,
+    family: 4,
     port,
-    secure: port === 465,
+    secure: false,
     auth: { user: mailUser, pass: mailPassword },
     requireTLS: port === 587,
     tls: { minVersion: 'TLSv1.2' },
