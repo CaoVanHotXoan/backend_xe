@@ -236,8 +236,7 @@ export async function requestRegisterOtp(req, res, next) {
       console.error('[Mail] Đăng ký OTP thất bại:', error.message);
       void notifyAdminOfRegistrationEmailFailure(email, error);
       return res.status(422).json({
-        message: 'Không thể gửi OTP đến Gmail này.',
-        ...(process.env.NODE_ENV !== 'production' && { detail: error.message }),
+        message: `Không thể gửi OTP: ${error.message}`,
       });
     }
     return res.json({ message: 'Mã OTP đã được gửi đến Gmail của bạn.' });

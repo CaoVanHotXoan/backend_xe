@@ -33,6 +33,8 @@ Swagger UI: `http://localhost:5000/api-docs`
 
 Frontend phải gọi fetch với `credentials: 'include'`. Với Next.js proxy hiện tại, đặt `BACKEND_PROXY_URL=http://localhost:5000` nếu muốn proxy `/api/backend` trỏ tới backend này. Backend vẫn chạy độc lập tại cổng 5000 và CORS dùng `origin: process.env.CLIENT_URL`, `credentials: true`.
 
+Khi deploy backend trên Render, bắt buộc khai báo `MAIL_HOST=smtp.gmail.com`, `MAIL_PORT=587`, `MAIL_USER`, `MAIL_PASSWORD` (Google App Password 16 ký tự), `JWT_SECRET`, thông tin SQL Server và `CORS_ORIGIN` bằng URL frontend Render. Có thể nhập nhiều URL frontend trong `CORS_ORIGIN`, ngăn cách bằng dấu phẩy. Frontend local vẫn dùng được với `BACKEND_PROXY_URL=https://backend-xe.onrender.com`.
+
 Lệnh endpoint procedure ví dụ:
 
 ```json
