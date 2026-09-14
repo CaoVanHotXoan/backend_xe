@@ -15,13 +15,12 @@ const otpStore = new Map();
 const otpLifetimeMs = Number(process.env.OTP_EXPIRE_MINUTES || 10) * 60 * 1000;
 const mailHost = String(process.env.MAIL_HOST || process.env.GMAIL_HOST || 'smtp.gmail.com').trim();
 const mailUser = String(process.env.MAIL_USER || process.env.GMAIL_USER || '').trim();
-const resendApiKey = String(process.env.RESEND_API_KEY || '').trim();
-const mailFrom = String(process.env.MAIL_FROM || mailUser || 'onboarding@resend.dev').trim();
+const mailFrom = String(process.env.MAIL_FROM || mailUser).trim();
 const mailPassword = String(process.env.MAIL_PASSWORD || process.env.GMAIL_APP_PASSWORD || '')
   .trim()
   .replace(/^['"]|['"]$/g, '')
   .replace(/\s+/g, '');
-console.log(`[Mail] provider=${resendApiKey ? 'resend' : 'smtp'}; from=${mailFrom}`);
+console.log(`[Mail] provider=smtp; host=${mailHost}; port=${process.env.MAIL_PORT || 587}; from=${mailFrom}`);
 
 function createMailTransport(port) {
   return nodemailer.createTransport({
@@ -46,7 +45,7 @@ function createOtp() {
 }
 
 async function sendOtp(email, purpose) {
-  if (!resendApiKey && (!mailHost || !mailUser || !mailPassword)) {
+  if (!mailHost || !mailUser || !mailPassword) {
     throw new Error('Thiếu cấu hình MAIL_HOST, MAIL_USER hoặc MAIL_PASSWORD trên backend.');
   }
   const otp = createOtp();
@@ -68,20 +67,6 @@ async function sendOtp(email, purpose) {
           <div style="padding:18px 32px;border-top:1px solid #eef0f2;color:#9ca3af;font-size:11px;">Email tự động từ WebXe. Vui lòng không trả lời email này.</div>
         </div>
       </div>`;
-
-  if (resendApiKey) {
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: mailFrom, to: [email], subject, text, html }),
-    });
-    const responseBody = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(`Resend từ chối email: ${responseBody.message || `HTTP ${response.status}`}`);
-    }
-    otpStore.set(`${purpose}:${email}`, { otp, expiresAt: Date.now() + otpLifetimeMs });
-    return;
-  }
 
   let result;
   const configuredPort = Number(process.env.MAIL_PORT || 587);
