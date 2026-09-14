@@ -33,7 +33,7 @@ Swagger UI: `http://localhost:5000/api-docs`
 
 Frontend phải gọi fetch với `credentials: 'include'`. Với Next.js proxy hiện tại, đặt `BACKEND_PROXY_URL=http://localhost:5000` nếu muốn proxy `/api/backend` trỏ tới backend này. Backend vẫn chạy độc lập tại cổng 5000 và CORS dùng `origin: process.env.CLIENT_URL`, `credentials: true`.
 
-Gửi OTP dùng Gmail API OAuth2 qua HTTPS, không dùng SMTP. Cần khai báo `MAIL_USER`, `MAIL_FROM`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` và `GMAIL_REFRESH_TOKEN`. OAuth scope phải có `https://www.googleapis.com/auth/gmail.send`. Ngoài ra cần `JWT_SECRET`, thông tin SQL Server và `CORS_ORIGIN` bằng URL frontend Render.
+Gửi OTP qua Google Apps Script HTTPS, không dùng SMTP, Resend hoặc Gmail OAuth2 trong backend. Tạo Web App Apps Script với `doPost`, sau đó khai báo `GOOGLE_APPS_SCRIPT_URL`, `GOOGLE_APPS_SCRIPT_SECRET`, `MAIL_USER` và `MAIL_FROM`. Ngoài ra cần `JWT_SECRET`, thông tin SQL Server và `CORS_ORIGIN` bằng URL frontend Render.
 
 Lệnh endpoint procedure ví dụ:
 

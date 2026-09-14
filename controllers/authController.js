@@ -14,10 +14,9 @@ const otpStore = new Map();
 const otpLifetimeMs = Number(process.env.OTP_EXPIRE_MINUTES || 10) * 60 * 1000;
 const mailUser = String(process.env.MAIL_USER || process.env.GMAIL_USER || '').trim();
 const mailFrom = String(process.env.MAIL_FROM || mailUser).trim();
-const gmailClientId = String(process.env.GMAIL_CLIENT_ID || '').trim();
-const gmailClientSecret = String(process.env.GMAIL_CLIENT_SECRET || '').trim();
-const gmailRefreshToken = String(process.env.GMAIL_REFRESH_TOKEN || '').trim();
-console.log(`[Mail] provider=gmail-api; from=${mailFrom}; user=${mailUser ? 'configured' : 'missing'}`);
+const appsScriptUrl = String(process.env.GOOGLE_APPS_SCRIPT_URL || '').trim();
+const appsScriptSecret = String(process.env.GOOGLE_APPS_SCRIPT_SECRET || '').trim();
+console.log(`[Mail] provider=google-apps-script; from=${mailFrom}; url=${appsScriptUrl ? 'configured' : 'missing'}`);
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
@@ -27,68 +26,18 @@ function createOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-function encodeMimeHeader(value) {
-  return `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`;
-}
-
-function encodeBase64Url(value) {
-  return Buffer.from(value, 'utf8').toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
-}
-
-async function sendGmailApi({ to, subject, text, html }) {
-  if (!mailUser || !gmailClientId || !gmailClientSecret || !gmailRefreshToken) {
-    throw new Error('Thiếu MAIL_USER, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET hoặc GMAIL_REFRESH_TOKEN trên backend.');
+async function sendGoogleAppsScript({ to, subject, text, html }) {
+  if (!appsScriptUrl || !appsScriptSecret) {
+    throw new Error('Thiếu GOOGLE_APPS_SCRIPT_URL hoặc GOOGLE_APPS_SCRIPT_SECRET trên backend.');
   }
-
-  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+  const sendResponse = await fetch(appsScriptUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: gmailClientId,
-      client_secret: gmailClientSecret,
-      refresh_token: gmailRefreshToken,
-      grant_type: 'refresh_token',
-    }),
-  });
-  const tokenBody = await tokenResponse.json().catch(() => ({}));
-  if (!tokenResponse.ok || !tokenBody.access_token) {
-    throw new Error(`Google OAuth2 từ chối refresh token: ${tokenBody.error_description || tokenBody.error || `HTTP ${tokenResponse.status}`}`);
-  }
-
-  const mimeMessage = [
-    `From: ${mailFrom}`,
-    `To: ${to}`,
-    `Subject: ${encodeMimeHeader(subject)}`,
-    'MIME-Version: 1.0',
-    'Content-Type: multipart/alternative; boundary="webxe-boundary"',
-    '',
-    '--webxe-boundary',
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: 8bit',
-    '',
-    text,
-    '--webxe-boundary',
-    'Content-Type: text/html; charset=UTF-8',
-    'Content-Transfer-Encoding: 8bit',
-    '',
-    html,
-    '--webxe-boundary--',
-  ].join('\r\n');
-
-  const sendResponse = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${tokenBody.access_token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ raw: encodeBase64Url(mimeMessage) }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ secret: appsScriptSecret, to, subject, text, html }),
   });
   const sendBody = await sendResponse.json().catch(() => ({}));
-  if (!sendResponse.ok) {
-    throw new Error(`Gmail API từ chối email: ${sendBody.error?.message || `HTTP ${sendResponse.status}`}`);
+  if (!sendResponse.ok || sendBody.ok !== true) {
+    throw new Error(`Google Apps Script từ chối email: ${sendBody.error || sendBody.message || `HTTP ${sendResponse.status}`}`);
   }
 }
 
@@ -114,10 +63,10 @@ async function sendOtp(email, purpose) {
       </div>`;
 
   try {
-    await sendGmailApi({ to: email, subject, text, html });
+    await sendGoogleAppsScript({ to: email, subject, text, html });
   } catch (error) {
-    console.error('[Mail] Gmail API gửi OTP thất bại:', error.message);
-    throw new Error(`Không thể gửi OTP qua Gmail API: ${error.message}`);
+    console.error('[Mail] Google Apps Script gửi OTP thất bại:', error.message);
+    throw new Error(`Không thể gửi OTP qua Google Apps Script: ${error.message}`);
   }
   otpStore.set(`${purpose}:${email}`, { otp, expiresAt: Date.now() + otpLifetimeMs });
 }
@@ -125,11 +74,11 @@ async function sendOtp(email, purpose) {
 async function notifyAdminOfRegistrationEmailFailure(email, error) {
   const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL || 'qlxebaton@gmail.com';
   try {
-    await sendGmailApi({
+    await sendGoogleAppsScript({
       to: adminEmail,
       subject: 'WebXe: Không gửi được OTP đăng ký',
-      text: `WebXe không gửi được mã OTP đăng ký đến địa chỉ: ${email}\n\nLỗi Gmail API: ${error.message}`,
-      html: `<p>WebXe không gửi được mã OTP đăng ký đến địa chỉ: ${email}</p><p>Lỗi Gmail API: ${error.message}</p>`,
+      text: `WebXe không gửi được mã OTP đăng ký đến địa chỉ: ${email}\n\nLỗi Google Apps Script: ${error.message}`,
+      html: `<p>WebXe không gửi được mã OTP đăng ký đến địa chỉ: ${email}</p><p>Lỗi Google Apps Script: ${error.message}</p>`,
     });
     console.log(`[Mail] Đã báo lỗi gửi OTP đăng ký cho Admin: ${adminEmail}.`);
   } catch (adminError) {
