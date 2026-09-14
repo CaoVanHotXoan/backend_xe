@@ -20,7 +20,9 @@ const mailPassword = String(process.env.MAIL_PASSWORD || process.env.GMAIL_APP_P
   .trim()
   .replace(/^['"]|['"]$/g, '')
   .replace(/\s+/g, '');
-console.log(`[Mail] provider=smtp; host=${mailHost}; port=465; from=${mailFrom}`);
+const appsScriptUrl = String(process.env.GOOGLE_APPS_SCRIPT_URL || '').trim().replace(/\/$/, '');
+const appsScriptSecret = String(process.env.GOOGLE_APPS_SCRIPT_SECRET || '').trim();
+console.log(`[Mail] provider=${appsScriptUrl ? 'google-apps-script' : 'smtp'}; from=${mailFrom}`);
 
 function createMailTransport() {
   return nodemailer.createTransport({
@@ -33,6 +35,21 @@ function createMailTransport() {
     greetingTimeout: 8000,
     socketTimeout: 12000,
   });
+}
+
+async function sendGoogleAppsScript({ to, subject, text, html }) {
+  if (!appsScriptUrl || !appsScriptSecret) {
+    throw new Error('Thiếu GOOGLE_APPS_SCRIPT_URL hoặc GOOGLE_APPS_SCRIPT_SECRET trên backend.');
+  }
+  const response = await fetch(appsScriptUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ secret: appsScriptSecret, to, subject, text, html }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body.ok !== true) {
+    throw new Error(`Google Apps Script HTTP ${response.status}: ${body.error || body.message || 'Deployment URL không hợp lệ.'}`);
+  }
 }
 
 function normalizeEmail(value) {
@@ -68,10 +85,14 @@ async function sendOtp(email, purpose) {
       </div>`;
 
   try {
-    await createMailTransport().sendMail({ from: mailFrom, to: email, subject, text, html });
+    if (appsScriptUrl) {
+      await sendGoogleAppsScript({ to: email, subject, text, html });
+    } else {
+      await createMailTransport().sendMail({ from: mailFrom, to: email, subject, text, html });
+    }
   } catch (error) {
-    console.error('[Mail] SMTP port 465 gửi OTP thất bại:', error.message);
-    throw new Error(`Không thể gửi OTP qua Gmail SMTP 465: ${error.message}`);
+    console.error(`[Mail] ${appsScriptUrl ? 'Google Apps Script' : 'SMTP port 465'} gửi OTP thất bại:`, error.message);
+    throw new Error(`Không thể gửi OTP qua ${appsScriptUrl ? 'Google Apps Script' : 'Gmail SMTP 465'}: ${error.message}`);
   }
   otpStore.set(`${purpose}:${email}`, { otp, expiresAt: Date.now() + otpLifetimeMs });
 }
@@ -79,12 +100,21 @@ async function sendOtp(email, purpose) {
 async function notifyAdminOfRegistrationEmailFailure(email, error) {
   const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL || 'qlxebaton@gmail.com';
   try {
-    await createMailTransport().sendMail({
-      from: mailFrom,
-      to: adminEmail,
-      subject: 'WebXe: Không gửi được OTP đăng ký',
-      text: `WebXe không gửi được mã OTP đăng ký đến địa chỉ: ${email}\n\nLỗi SMTP: ${error.message}`,
-    });
+    if (appsScriptUrl) {
+      await sendGoogleAppsScript({
+        to: adminEmail,
+        subject: 'WebXe: Không gửi được OTP đăng ký',
+        text: `WebXe không gửi được mã OTP đăng ký đến địa chỉ: ${email}\n\nLỗi: ${error.message}`,
+        html: `<p>Không gửi được OTP đến ${email}</p><p>Lỗi: ${error.message}</p>`,
+      });
+    } else {
+      await createMailTransport().sendMail({
+        from: mailFrom,
+        to: adminEmail,
+        subject: 'WebXe: Không gửi được OTP đăng ký',
+        text: `WebXe không gửi được mã OTP đăng ký đến địa chỉ: ${email}\n\nLỗi SMTP: ${error.message}`,
+      });
+    }
     console.log(`[Mail] Đã báo lỗi gửi OTP đăng ký cho Admin: ${adminEmail}.`);
   } catch (adminError) {
     console.error('[Mail] Không gửi được thông báo lỗi OTP cho Admin:', adminError.message);
