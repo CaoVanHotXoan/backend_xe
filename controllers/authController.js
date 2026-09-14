@@ -1,6 +1,5 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import nodemailer from 'nodemailer';
 import { getPool, sql } from '../config/db.js';
 
 const cookieOptions = {
@@ -13,29 +12,12 @@ const cookieOptions = {
 
 const otpStore = new Map();
 const otpLifetimeMs = Number(process.env.OTP_EXPIRE_MINUTES || 10) * 60 * 1000;
-const mailHost = String(process.env.MAIL_HOST || process.env.GMAIL_HOST || 'smtp.gmail.com').trim();
 const mailUser = String(process.env.MAIL_USER || process.env.GMAIL_USER || '').trim();
 const mailFrom = String(process.env.MAIL_FROM || mailUser).trim();
-const mailPassword = String(process.env.MAIL_PASSWORD || process.env.GMAIL_APP_PASSWORD || '')
-  .trim()
-  .replace(/^['"]|['"]$/g, '')
-  .replace(/\s+/g, '');
-console.log(`[Mail] provider=smtp; host=${mailHost}; port=${process.env.MAIL_PORT || 587}; from=${mailFrom}`);
-
-function createMailTransport(port) {
-  return nodemailer.createTransport({
-    host: mailHost,
-    family: 4,
-    port,
-    secure: false,
-    auth: { user: mailUser, pass: mailPassword },
-    requireTLS: port === 587,
-    tls: { minVersion: 'TLSv1.2' },
-    connectionTimeout: 8000,
-    greetingTimeout: 8000,
-    socketTimeout: 12000,
-  });
-}
+const gmailClientId = String(process.env.GMAIL_CLIENT_ID || '').trim();
+const gmailClientSecret = String(process.env.GMAIL_CLIENT_SECRET || '').trim();
+const gmailRefreshToken = String(process.env.GMAIL_REFRESH_TOKEN || '').trim();
+console.log(`[Mail] provider=gmail-api; from=${mailFrom}; user=${mailUser ? 'configured' : 'missing'}`);
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
@@ -45,10 +27,72 @@ function createOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-async function sendOtp(email, purpose) {
-  if (!mailHost || !mailUser || !mailPassword) {
-    throw new Error('Thiếu cấu hình MAIL_HOST, MAIL_USER hoặc MAIL_PASSWORD trên backend.');
+function encodeMimeHeader(value) {
+  return `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`;
+}
+
+function encodeBase64Url(value) {
+  return Buffer.from(value, 'utf8').toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+async function sendGmailApi({ to, subject, text, html }) {
+  if (!mailUser || !gmailClientId || !gmailClientSecret || !gmailRefreshToken) {
+    throw new Error('Thiếu MAIL_USER, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET hoặc GMAIL_REFRESH_TOKEN trên backend.');
   }
+
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: gmailClientId,
+      client_secret: gmailClientSecret,
+      refresh_token: gmailRefreshToken,
+      grant_type: 'refresh_token',
+    }),
+  });
+  const tokenBody = await tokenResponse.json().catch(() => ({}));
+  if (!tokenResponse.ok || !tokenBody.access_token) {
+    throw new Error(`Google OAuth2 từ chối refresh token: ${tokenBody.error_description || tokenBody.error || `HTTP ${tokenResponse.status}`}`);
+  }
+
+  const mimeMessage = [
+    `From: ${mailFrom}`,
+    `To: ${to}`,
+    `Subject: ${encodeMimeHeader(subject)}`,
+    'MIME-Version: 1.0',
+    'Content-Type: multipart/alternative; boundary="webxe-boundary"',
+    '',
+    '--webxe-boundary',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    text,
+    '--webxe-boundary',
+    'Content-Type: text/html; charset=UTF-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    html,
+    '--webxe-boundary--',
+  ].join('\r\n');
+
+  const sendResponse = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${tokenBody.access_token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ raw: encodeBase64Url(mimeMessage) }),
+  });
+  const sendBody = await sendResponse.json().catch(() => ({}));
+  if (!sendResponse.ok) {
+    throw new Error(`Gmail API từ chối email: ${sendBody.error?.message || `HTTP ${sendResponse.status}`}`);
+  }
+}
+
+async function sendOtp(email, purpose) {
   const otp = createOtp();
   const expirationMinutes = process.env.OTP_EXPIRE_MINUTES || 10;
   const isRegistration = purpose === 'register';
@@ -69,23 +113,11 @@ async function sendOtp(email, purpose) {
         </div>
       </div>`;
 
-  let result;
-  const configuredPort = Number(process.env.MAIL_PORT || 587);
   try {
-    result = await createMailTransport(configuredPort).sendMail({
-      from: mailFrom,
-      to: email,
-      subject,
-      text,
-      html
-    });
+    await sendGmailApi({ to: email, subject, text, html });
   } catch (error) {
-    console.error(`[Mail] SMTP port ${configuredPort} thất bại:`, error.message);
-    const smtpCode = error?.code ? ` [${error.code}]` : '';
-    throw new Error(`Không thể gửi OTP qua Gmail SMTP${smtpCode}: ${error.message}`);
-  }
-  if (result.rejected?.includes(email)) {
-    throw new Error(`Gmail từ chối người nhận ${email}.`);
+    console.error('[Mail] Gmail API gửi OTP thất bại:', error.message);
+    throw new Error(`Không thể gửi OTP qua Gmail API: ${error.message}`);
   }
   otpStore.set(`${purpose}:${email}`, { otp, expiresAt: Date.now() + otpLifetimeMs });
 }
@@ -93,11 +125,11 @@ async function sendOtp(email, purpose) {
 async function notifyAdminOfRegistrationEmailFailure(email, error) {
   const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL || 'qlxebaton@gmail.com';
   try {
-    await createMailTransport(Number(process.env.MAIL_PORT || 587)).sendMail({
-      from: mailUser,
+    await sendGmailApi({
       to: adminEmail,
       subject: 'WebXe: Không gửi được OTP đăng ký',
-      text: `WebXe không gửi được mã OTP đăng ký đến địa chỉ: ${email}\n\nLỗi SMTP: ${error.message}\n\nVui lòng kiểm tra lại địa chỉ Gmail của khách hàng.`,
+      text: `WebXe không gửi được mã OTP đăng ký đến địa chỉ: ${email}\n\nLỗi Gmail API: ${error.message}`,
+      html: `<p>WebXe không gửi được mã OTP đăng ký đến địa chỉ: ${email}</p><p>Lỗi Gmail API: ${error.message}</p>`,
     });
     console.log(`[Mail] Đã báo lỗi gửi OTP đăng ký cho Admin: ${adminEmail}.`);
   } catch (adminError) {

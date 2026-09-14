@@ -33,7 +33,7 @@ Swagger UI: `http://localhost:5000/api-docs`
 
 Frontend phải gọi fetch với `credentials: 'include'`. Với Next.js proxy hiện tại, đặt `BACKEND_PROXY_URL=http://localhost:5000` nếu muốn proxy `/api/backend` trỏ tới backend này. Backend vẫn chạy độc lập tại cổng 5000 và CORS dùng `origin: process.env.CLIENT_URL`, `credentials: true`.
 
-Khi dùng Gmail SMTP, khai báo `MAIL_HOST=smtp.gmail.com`, `MAIL_PORT=587`, `MAIL_USER`, `MAIL_PASSWORD` là Google App Password 16 ký tự và `MAIL_FROM` trùng địa chỉ Gmail. Cổng 587 dùng STARTTLS. Ngoài ra cần `JWT_SECRET`, thông tin SQL Server và `CORS_ORIGIN` bằng URL frontend Render. Có thể nhập nhiều URL frontend trong `CORS_ORIGIN`, ngăn cách bằng dấu phẩy.
+Gửi OTP dùng Gmail API OAuth2 qua HTTPS, không dùng SMTP. Cần khai báo `MAIL_USER`, `MAIL_FROM`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` và `GMAIL_REFRESH_TOKEN`. OAuth scope phải có `https://www.googleapis.com/auth/gmail.send`. Ngoài ra cần `JWT_SECRET`, thông tin SQL Server và `CORS_ORIGIN` bằng URL frontend Render.
 
 Lệnh endpoint procedure ví dụ:
 
