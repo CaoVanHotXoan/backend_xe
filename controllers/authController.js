@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import nodemailer from 'nodemailer';
 import { getPool, sql } from '../config/db.js';
 
 const cookieOptions = {
@@ -12,11 +13,27 @@ const cookieOptions = {
 
 const otpStore = new Map();
 const otpLifetimeMs = Number(process.env.OTP_EXPIRE_MINUTES || 10) * 60 * 1000;
+const mailHost = String(process.env.MAIL_HOST || 'smtp.gmail.com').trim();
 const mailUser = String(process.env.MAIL_USER || process.env.GMAIL_USER || '').trim();
 const mailFrom = String(process.env.MAIL_FROM || mailUser).trim();
-const appsScriptUrl = String(process.env.GOOGLE_APPS_SCRIPT_URL || '').trim();
-const appsScriptSecret = String(process.env.GOOGLE_APPS_SCRIPT_SECRET || '').trim();
-console.log(`[Mail] provider=google-apps-script; from=${mailFrom}; url=${appsScriptUrl ? 'configured' : 'missing'}`);
+const mailPassword = String(process.env.MAIL_PASSWORD || process.env.GMAIL_APP_PASSWORD || '')
+  .trim()
+  .replace(/^['"]|['"]$/g, '')
+  .replace(/\s+/g, '');
+console.log(`[Mail] provider=smtp; host=${mailHost}; port=465; from=${mailFrom}`);
+
+function createMailTransport() {
+  return nodemailer.createTransport({
+    host: mailHost,
+    family: 4,
+    port: 465,
+    secure: true,
+    auth: { user: mailUser, pass: mailPassword },
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 12000,
+  });
+}
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
@@ -26,22 +43,10 @@ function createOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-async function sendGoogleAppsScript({ to, subject, text, html }) {
-  if (!appsScriptUrl || !appsScriptSecret) {
-    throw new Error('Thiếu GOOGLE_APPS_SCRIPT_URL hoặc GOOGLE_APPS_SCRIPT_SECRET trên backend.');
-  }
-  const sendResponse = await fetch(appsScriptUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ secret: appsScriptSecret, to, subject, text, html }),
-  });
-  const sendBody = await sendResponse.json().catch(() => ({}));
-  if (!sendResponse.ok || sendBody.ok !== true) {
-    throw new Error(`Google Apps Script từ chối email: ${sendBody.error || sendBody.message || `HTTP ${sendResponse.status}`}`);
-  }
-}
-
 async function sendOtp(email, purpose) {
+  if (!mailUser || !mailPassword) {
+    throw new Error('Thiếu MAIL_USER hoặc MAIL_PASSWORD trên backend.');
+  }
   const otp = createOtp();
   const expirationMinutes = process.env.OTP_EXPIRE_MINUTES || 10;
   const isRegistration = purpose === 'register';
@@ -63,10 +68,10 @@ async function sendOtp(email, purpose) {
       </div>`;
 
   try {
-    await sendGoogleAppsScript({ to: email, subject, text, html });
+    await createMailTransport().sendMail({ from: mailFrom, to: email, subject, text, html });
   } catch (error) {
-    console.error('[Mail] Google Apps Script gửi OTP thất bại:', error.message);
-    throw new Error(`Không thể gửi OTP qua Google Apps Script: ${error.message}`);
+    console.error('[Mail] SMTP port 465 gửi OTP thất bại:', error.message);
+    throw new Error(`Không thể gửi OTP qua Gmail SMTP 465: ${error.message}`);
   }
   otpStore.set(`${purpose}:${email}`, { otp, expiresAt: Date.now() + otpLifetimeMs });
 }
@@ -74,11 +79,11 @@ async function sendOtp(email, purpose) {
 async function notifyAdminOfRegistrationEmailFailure(email, error) {
   const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL || 'qlxebaton@gmail.com';
   try {
-    await sendGoogleAppsScript({
+    await createMailTransport().sendMail({
+      from: mailFrom,
       to: adminEmail,
       subject: 'WebXe: Không gửi được OTP đăng ký',
-      text: `WebXe không gửi được mã OTP đăng ký đến địa chỉ: ${email}\n\nLỗi Google Apps Script: ${error.message}`,
-      html: `<p>WebXe không gửi được mã OTP đăng ký đến địa chỉ: ${email}</p><p>Lỗi Google Apps Script: ${error.message}</p>`,
+      text: `WebXe không gửi được mã OTP đăng ký đến địa chỉ: ${email}\n\nLỗi SMTP: ${error.message}`,
     });
     console.log(`[Mail] Đã báo lỗi gửi OTP đăng ký cho Admin: ${adminEmail}.`);
   } catch (adminError) {
