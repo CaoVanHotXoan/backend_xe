@@ -21,7 +21,6 @@ const mailPassword = String(process.env.MAIL_PASSWORD || process.env.GMAIL_APP_P
   .trim()
   .replace(/^['"]|['"]$/g, '')
   .replace(/\s+/g, '');
-
 console.log(`[Mail] provider=${resendApiKey ? 'resend' : 'smtp'}; from=${mailFrom}`);
 
 function createMailTransport(port) {
@@ -86,26 +85,16 @@ async function sendOtp(email, purpose) {
 
   let result;
   const configuredPort = Number(process.env.MAIL_PORT || 587);
-  const ports = [...new Set([configuredPort, configuredPort === 465 ? 587 : 465])];
-  let lastError;
   try {
-    for (const port of ports) {
-      try {
-        result = await createMailTransport(port).sendMail({
-          from: mailFrom,
-          to: email,
-          subject,
-          text,
-          html
-        });
-        break;
-      } catch (error) {
-        lastError = error;
-        console.error(`[Mail] SMTP port ${port} thất bại:`, error.message);
-      }
-    }
-    if (!result) throw lastError || new Error('SMTP không phản hồi.');
+    result = await createMailTransport(configuredPort).sendMail({
+      from: mailFrom,
+      to: email,
+      subject,
+      text,
+      html
+    });
   } catch (error) {
+    console.error(`[Mail] SMTP port ${configuredPort} thất bại:`, error.message);
     const smtpCode = error?.code ? ` [${error.code}]` : '';
     throw new Error(`Không thể gửi OTP qua Gmail SMTP${smtpCode}: ${error.message}`);
   }
