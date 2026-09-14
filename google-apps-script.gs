@@ -1,6 +1,10 @@
 const WEBXE_SECRET = 'replace-with-the-same-secret-as-render';
 const SENDER_NAME = 'WebXe';
 
+function doGet() {
+  return jsonResponse({ ok: true, service: 'webxe-mail' });
+}
+
 function doPost(event) {
   try {
     const payload = JSON.parse(event.postData.contents || '{}');
